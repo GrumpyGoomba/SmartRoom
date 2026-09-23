@@ -8,7 +8,6 @@ PERSON_CLASS_ID = 0
 CONFIDENCE_THRESHOLD = 0.5
 KEYPOINT_CONFIDENCE_THRESHOLD = 0.5
 TRANSITION_FRAMES = 4
-VERTICAL_ANGLE_TOLERANCE_DEGREES = 20
 HORIZONTAL_ANGLE_TOLERANCE_DEGREES = 25
 
 LEFT_SHOULDER = 5
@@ -38,8 +37,17 @@ def point_from_keypoints(keypoints, index):
 
 
 def detect_bed_posture(keypoints, keypoint_confidence):
-    torso_keypoints = (LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_HIP, RIGHT_HIP)
-    if not all(keypoint_is_visible(keypoint_confidence, index) for index in torso_keypoints):
+    required_keypoints = (
+        LEFT_SHOULDER,
+        RIGHT_SHOULDER,
+        LEFT_HIP,
+        RIGHT_HIP,
+        LEFT_KNEE,
+        RIGHT_KNEE,
+        LEFT_ANKLE,
+        RIGHT_ANKLE,
+    )
+    if not all(keypoint_is_visible(keypoint_confidence, index) for index in required_keypoints):
         return None
 
     shoulder_center = (
@@ -51,36 +59,29 @@ def detect_bed_posture(keypoints, keypoint_confidence):
         (float(keypoints[LEFT_HIP][1]) + float(keypoints[RIGHT_HIP][1])) / 2,
     )
     torso_angle = angle_from_horizontal(shoulder_center, hip_center)
-    torso_is_vertical = (
+    torso_is_horizontal = (
         torso_angle is not None
-        and abs(torso_angle - 90) <= VERTICAL_ANGLE_TOLERANCE_DEGREES
+        and torso_angle <= HORIZONTAL_ANGLE_TOLERANCE_DEGREES
     )
 
-    leg_is_in_bed_posture = False
+    all_leg_segments_are_horizontal = True
     for hip_index, knee_index, ankle_index in (
         (LEFT_HIP, LEFT_KNEE, LEFT_ANKLE),
         (RIGHT_HIP, RIGHT_KNEE, RIGHT_ANKLE),
     ):
-        leg_keypoints = (hip_index, knee_index, ankle_index)
-        if not all(keypoint_is_visible(keypoint_confidence, index) for index in leg_keypoints):
-            continue
-
         hip = point_from_keypoints(keypoints, hip_index)
         knee = point_from_keypoints(keypoints, knee_index)
         ankle = point_from_keypoints(keypoints, ankle_index)
         thigh_angle = angle_from_horizontal(hip, knee)
         shin_angle = angle_from_horizontal(knee, ankle)
-        thigh_is_horizontal = (
+        all_leg_segments_are_horizontal &= (
             thigh_angle is not None
             and thigh_angle <= HORIZONTAL_ANGLE_TOLERANCE_DEGREES
+            and shin_angle is not None
+            and shin_angle <= HORIZONTAL_ANGLE_TOLERANCE_DEGREES
         )
-        shin_is_vertical = (
-            shin_angle is not None
-            and abs(shin_angle - 90) <= VERTICAL_ANGLE_TOLERANCE_DEGREES
-        )
-        leg_is_in_bed_posture |= thigh_is_horizontal and shin_is_vertical
 
-    return torso_is_vertical and leg_is_in_bed_posture
+    return torso_is_horizontal and all_leg_segments_are_horizontal
 
 
 def select_largest_person(pose_result):
