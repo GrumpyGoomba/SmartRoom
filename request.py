@@ -38,4 +38,4 @@ def bedroom_lights_off():
 # TEST
 # -------------------------
 
-bedroom_lights_on()
+# bedroom_lights_on()
