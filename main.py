@@ -30,6 +30,9 @@ candidate_bed_state = None
 candidate_state_frames = 0
 last_bed_event = None
 
+print("SmartRoom initialized! Camera and YOLO are ready.", flush=True)
+print("Starting bed detection...", flush=True)
+
 try:
     while True:
         frame = picam2.capture_array()
