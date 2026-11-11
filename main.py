@@ -123,49 +123,5 @@ try:
                 else:
                     candidate_bed_state = None
                     candidate_state_frames = 0
-
-                posture_text = "Lying: YES" if lying_down else "Lying: NO"
-                posture_color = (0, 255, 0) if lying_down else (0, 0, 255)
-                cv2.putText(
-                    frame,
-                    posture_text,
-                    (20, 115),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    posture_color,
-                    2,
-                )
-
-        bed_x1, bed_y1, bed_x2, bed_y2 = BED_REGION
-        cv2.rectangle(
-            frame,
-            (int(bed_x1 * frame.shape[1]), int(bed_y1 * frame.shape[0])),
-            (int(bed_x2 * frame.shape[1]), int(bed_y2 * frame.shape[0])),
-            (255, 0, 255),
-            2,
-        )
-        cv2.putText(
-            frame,
-            "BED REGION",
-            (
-                int(bed_x1 * frame.shape[1]) + 10,
-                int(bed_y1 * frame.shape[0]) + 30,
-            ),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 0, 255),
-            2,
-        )
-
-        if last_bed_event:
-            cv2.putText(
-                frame,
-                last_bed_event,
-                (20, 80),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (255, 0, 0) if person_in_bed else (255, 0, 255),
-                2,
-            )
 finally:
     picam2.stop()
