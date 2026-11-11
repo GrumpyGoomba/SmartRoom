@@ -1,6 +1,5 @@
 import math
 from request import bedroom_lights_off, bedroom_lights_on
-import cv2
 from picamera2 import Picamera2
 from ultralytics import YOLO
 
@@ -44,7 +43,6 @@ try:
             imgsz=640,
             verbose=False,
         )[0]
-        frame = pose_result.plot()
 
         selected_person = None
         largest_person_area = 0
@@ -169,11 +167,5 @@ try:
                 (255, 0, 0) if person_in_bed else (255, 0, 255),
                 2,
             )
-
-        cv2.imshow("Camera", frame)
-
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
 finally:
     picam2.stop()
-    cv2.destroyAllWindows()
