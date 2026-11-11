@@ -18,7 +18,7 @@ RIGHT_HIP = 12
 picam2 = Picamera2(camera_num=0)
 picam2.configure(
     picam2.create_video_configuration(
-        main={"size": (1280, 720), "format": "BGR888"}
+        main={"size": (1280, 720), "format": "RGB888"}
     )
 )
 picam2.start()
