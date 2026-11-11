@@ -26,7 +26,7 @@ picam2.configure(
     )
 )
 picam2.start()
-# start_preview(port=5000)
+start_preview(port=5000)
 yolo_pose_model = YOLO("yolov8n-pose.pt")
 previous_lying_down = None
 person_in_bed = None
