@@ -1,117 +1,81 @@
-
-import ast
 import cv2
-from pathlib import Path
+import threading
 from flask import Flask, Response, render_template_string
-from picamera2 import Picamera2
 
 app = Flask(__name__)
 
-MAIN_FILE = Path(__file__).resolve().parent / "main.py"
+latest_frame = None
+frame_condition = threading.Condition()
 
 
-def load_settings():
-    tree = ast.parse(MAIN_FILE.read_text())
+def update_preview(frame, bed_region):
+    global latest_frame
 
-    bed_region = None
-    camera_size = None
+    # Copy frame so YOLO and preview don't interfere
+    preview_frame = frame.copy()
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if (
-                    isinstance(target, ast.Name)
-                    and target.id == "BED_REGION"
-                ):
-                    bed_region = ast.literal_eval(node.value)
+    height, width = preview_frame.shape[:2]
+    bx1, by1, bx2, by2 = bed_region
 
-        if isinstance(node, ast.Dict):
-            for key, value in zip(node.keys, node.values):
-                if (
-                    isinstance(key, ast.Constant)
-                    and key.value == "size"
-                ):
-                    try:
-                        size = ast.literal_eval(value)
-                        if (
-                            isinstance(size, (tuple, list))
-                            and len(size) == 2
-                        ):
-                            camera_size = size
-                    except (ValueError, TypeError):
-                        pass
+    x1 = int(bx1 * width)
+    y1 = int(by1 * height)
+    x2 = min(width - 1, int(bx2 * width))
+    y2 = min(height - 1, int(by2 * height))
 
-    if bed_region is None or camera_size is None:
-        raise ValueError("Camera settings missing from main.py")
-
-    return bed_region, camera_size
-
-
-BED_REGION, CAMERA_SIZE = load_settings()
-
-print("Camera resolution:", CAMERA_SIZE)
-print("Bed region:", BED_REGION)
-
-picam2 = Picamera2(camera_num=0)
-picam2.configure(
-    picam2.create_video_configuration(
-        main={
-            "size": tuple(CAMERA_SIZE),
-            "format": "RGB888"
-        }
+    # Draw bed region
+    cv2.rectangle(
+        preview_frame,
+        (x1, y1),
+        (x2, y2),
+        (255, 0, 255),
+        3
     )
-)
-picam2.start()
+
+    cv2.putText(
+        preview_frame,
+        "BED REGION",
+        (x1 + 10, max(25, y1 + 30)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 0, 255),
+        2
+    )
+
+    success, buffer = cv2.imencode(
+        ".jpg",
+        preview_frame,
+        [cv2.IMWRITE_JPEG_QUALITY, 70]
+    )
+
+    if not success:
+        return
+
+    with frame_condition:
+        latest_frame = buffer.tobytes()
+        frame_condition.notify_all()
 
 
 def generate_frames():
+    last_frame = None
+
     while True:
-        frame = picam2.capture_array()
+        with frame_condition:
+            frame_condition.wait_for(
+                lambda: latest_frame is not None
+                and latest_frame is not last_frame,
+                timeout=5
+            )
+            frame = latest_frame
 
-        if frame is None:
+        if frame is None or frame is last_frame:
             continue
 
-        height, width = frame.shape[:2]
-        bx1, by1, bx2, by2 = BED_REGION
-
-        x1 = int(bx1 * width)
-        y1 = int(by1 * height)
-        x2 = min(width - 1, int(bx2 * width))
-        y2 = min(height - 1, int(by2 * height))
-
-        # Purple bed region
-        cv2.rectangle(
-            frame,
-            (x1, y1),
-            (x2, y2),
-            (255, 0, 255),
-            3
-        )
-
-        cv2.putText(
-            frame,
-            "BED REGION",
-            (x1 + 10, y1 + 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 0, 255),
-            2
-        )
-
-        # Encode frame as JPEG
-        success, buffer = cv2.imencode(
-            ".jpg",
-            frame,
-            [cv2.IMWRITE_JPEG_QUALITY, 75]
-        )
-
-        if not success:
-            continue
+        last_frame = frame
 
         yield (
             b"--frame\r\n"
             b"Content-Type: image/jpeg\r\n\r\n"
-            + buffer.tobytes()
+            + frame
             + b"\r\n"
         )
 
@@ -122,7 +86,7 @@ def index():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Raspberry Pi Bed Camera</title>
+        <title>SmartRoom Preview</title>
         <meta name="viewport"
               content="width=device-width, initial-scale=1">
         <style>
@@ -141,14 +105,12 @@ def index():
         </style>
     </head>
     <body>
-        <h2>Raspberry Pi Bed Camera</h2>
-        <p>Live Camera Alignment Preview</p>
+        <h2>SmartRoom Live Preview</h2>
+        <p>YOLO bed detection camera</p>
         <img src="/video_feed">
-        <p>Bed Region: {{ region }}</p>
-        <p>Resolution: {{ resolution }}</p>
     </body>
     </html>
-    """, region=BED_REGION, resolution=CAMERA_SIZE)
+    """)
 
 
 @app.route("/video_feed")
@@ -159,13 +121,15 @@ def video_feed():
     )
 
 
-if __name__ == "__main__":
-    try:
-        app.run(
+def start_preview(port=5000):
+    thread = threading.Thread(
+        target=lambda: app.run(
             host="0.0.0.0",
-            port=5000,
+            port=port,
             threaded=True,
             use_reloader=False
-        )
-    finally:
-        picam2.stop()
+        ),
+        daemon=True
+    )
+    thread.start()
+    print(f"Preview server started on port {port}", flush=True)

@@ -1,4 +1,5 @@
 import math
+from preview import start_preview, update_preview
 from request import bedroom_lights_off, bedroom_lights_on
 from picamera2 import Picamera2
 from ultralytics import YOLO
@@ -22,7 +23,7 @@ picam2.configure(
     )
 )
 picam2.start()
-
+start_preview(port=5000)
 yolo_pose_model = YOLO("yolov8n-pose.pt")
 previous_lying_down = None
 person_in_bed = None
@@ -38,7 +39,7 @@ try:
         frame = picam2.capture_array()
         if frame is None:
             continue
-
+        update_preview(frame, BED_REGION)
         pose_result = yolo_pose_model(
             frame,
             classes=[PERSON_CLASS_ID],
