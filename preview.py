@@ -57,7 +57,7 @@ picam2.configure(
     picam2.create_video_configuration(
         main={
             "size": tuple(CAMERA_SIZE),
-            "format": "BGR888"
+            "format": "RGB888"
         }
     )
 )
