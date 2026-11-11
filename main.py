@@ -3,6 +3,9 @@ from preview import start_preview, update_preview
 from request import bedroom_lights_off, bedroom_lights_on
 from picamera2 import Picamera2
 from ultralytics import YOLO
+import torch
+
+torch.set_num_threads(3)
 
 PERSON_CLASS_ID = 0
 CONFIDENCE_THRESHOLD = 0.5
@@ -19,11 +22,11 @@ RIGHT_HIP = 12
 picam2 = Picamera2(camera_num=0)
 picam2.configure(
     picam2.create_video_configuration(
-        main={"size": (1280, 720), "format": "RGB888"}
+        main={"size": (960, 540), "format": "RGB888"}
     )
 )
 picam2.start()
-start_preview(port=5000)
+# start_preview(port=5000)
 yolo_pose_model = YOLO("yolov8n-pose.pt")
 previous_lying_down = None
 person_in_bed = None
@@ -44,7 +47,7 @@ try:
             frame,
             classes=[PERSON_CLASS_ID],
             conf=CONFIDENCE_THRESHOLD,
-            imgsz=640,
+            imgsz=416,
             verbose=False,
         )[0]
 
