@@ -357,7 +357,7 @@ def create_app(controller, frames):
                 if not enabled:
                     break
 
-                if frame is None or version == previous_version:
+                if frame is None:
                     continue
 
                 image = frame.copy()
