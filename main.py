@@ -1,134 +1,152 @@
-import math
-from preview import start_preview, update_preview
-from request import bedroom_lights_off, bedroom_lights_on
-from picamera2 import Picamera2
-from ultralytics import YOLO
-import torch
 
-torch.set_num_threads(3)
+import math
+from ultralytics import YOLO
+from request import bedroom_lights_off, bedroom_lights_on
 
 PERSON_CLASS_ID = 0
-CONFIDENCE_THRESHOLD = 0.5
-KEYPOINT_CONFIDENCE_THRESHOLD = 0.5
-BED_REGION = (0.5, 0.73, 1.0, 1.0)
-TRANSITION_FRAMES = 2
-LYING_TORSO_ANGLE_MAX_DEGREES = 35
 
 LEFT_SHOULDER = 5
 RIGHT_SHOULDER = 6
 LEFT_HIP = 11
 RIGHT_HIP = 12
 
-picam2 = Picamera2(camera_num=0)
-picam2.configure(
-    picam2.create_video_configuration(
-        main={"size": (960, 540), "format": "RGB888"}
-    )
-)
-picam2.start()
-start_preview(port=5000)
-yolo_pose_model = YOLO("yolov8n-pose.pt")
-previous_lying_down = None
-person_in_bed = None
-candidate_bed_state = None
-candidate_state_frames = 0
-last_bed_event = None
 
-print("SmartRoom initialized! Camera and YOLO are ready.", flush=True)
-print("Starting bed detection...", flush=True)
+class BedDetector:
+    def __init__(self):
+        print("Loading YOLO pose model...", flush=True)
+        self.model = YOLO("yolov8n-pose.pt")
+        self.reset()
+        print("YOLO model ready.", flush=True)
 
-try:
-    while True:
-        frame = picam2.capture_array()
-        if frame is None:
-            continue
-        update_preview(frame, BED_REGION)
-        pose_result = yolo_pose_model(
+    def reset(self):
+        self.previous_lying_down = None
+        self.person_in_bed = None
+        self.candidate_bed_state = None
+        self.candidate_state_frames = 0
+        self.last_bed_event = None
+
+    def process_frame(self, frame, config):
+        yolo = config["yolo"]
+        bed = config["bed"]
+
+        result = self.model(
             frame,
             classes=[PERSON_CLASS_ID],
-            conf=CONFIDENCE_THRESHOLD,
-            imgsz=416,
-            verbose=False,
+            conf=yolo["confidence"],
+            imgsz=yolo["imgsz"],
+            verbose=False
         )[0]
 
-        selected_person = None
-        largest_person_area = 0
-        if pose_result.boxes is not None and pose_result.keypoints is not None:
-            for person_index, box in enumerate(pose_result.boxes.xyxy):
-                x1, y1, x2, y2 = box.tolist()
-                area = (x2 - x1) * (y2 - y1)
-                if area > largest_person_area:
-                    largest_person_area = area
-                    selected_person = person_index
+        if result.boxes is None or result.keypoints is None:
+            return
 
-        lying_down = None
-        if selected_person is not None:
-            keypoints = pose_result.keypoints.xy[selected_person]
-            keypoint_confidence = pose_result.keypoints.conf[selected_person]
-            required_keypoints = [
-                LEFT_SHOULDER,
-                RIGHT_SHOULDER,
-                LEFT_HIP,
-                RIGHT_HIP,
-            ]
-            body_visible = all(
-                float(keypoint_confidence[index]) >= KEYPOINT_CONFIDENCE_THRESHOLD
-                for index in required_keypoints
+        if result.keypoints.conf is None:
+            return
+
+        selected = None
+        largest_area = 0
+
+        for index, box in enumerate(result.boxes.xyxy):
+            x1, y1, x2, y2 = box.tolist()
+            area = (x2 - x1) * (y2 - y1)
+
+            if area > largest_area:
+                largest_area = area
+                selected = index
+
+        if selected is None:
+            return
+
+        points = result.keypoints.xy[selected]
+        confidence = result.keypoints.conf[selected]
+
+        required = [
+            LEFT_SHOULDER,
+            RIGHT_SHOULDER,
+            LEFT_HIP,
+            RIGHT_HIP
+        ]
+
+        if not all(
+            float(confidence[i]) >= yolo["keypoint_confidence"]
+            for i in required
+        ):
+            return
+
+        lsx, lsy = points[LEFT_SHOULDER].tolist()
+        rsx, rsy = points[RIGHT_SHOULDER].tolist()
+        lhx, lhy = points[LEFT_HIP].tolist()
+        rhx, rhy = points[RIGHT_HIP].tolist()
+
+        hip_px = (lhx + rhx) / 2
+        hip_py = (lhy + rhy) / 2
+
+        hip_x = hip_px / frame.shape[1]
+        hip_y = hip_py / frame.shape[0]
+
+        shoulder_x = (lsx + rsx) / 2
+        shoulder_y = (lsy + rsy) / 2
+
+        torso_angle = math.degrees(
+            math.atan2(
+                abs(hip_py - shoulder_y),
+                abs(hip_px - shoulder_x)
             )
+        )
 
-            if body_visible:
-                left_shoulder_x, left_shoulder_y = keypoints[LEFT_SHOULDER].tolist()
-                right_shoulder_x, right_shoulder_y = keypoints[RIGHT_SHOULDER].tolist()
-                left_hip_x, left_hip_y = keypoints[LEFT_HIP].tolist()
-                right_hip_x, right_hip_y = keypoints[RIGHT_HIP].tolist()
+        lying_down = (
+            torso_angle <= bed["lying_angle_max"]
+        )
 
-                hip_x = (left_hip_x + right_hip_x) / 2 / frame.shape[1]
-                hip_y = (left_hip_y + right_hip_y) / 2 / frame.shape[0]
-                shoulder_x = (left_shoulder_x + right_shoulder_x) / 2
-                shoulder_y = (left_shoulder_y + right_shoulder_y) / 2
-                torso_angle = math.degrees(math.atan2(
-                    abs((left_hip_y + right_hip_y) / 2 - shoulder_y),
-                    abs((left_hip_x + right_hip_x) / 2 - shoulder_x),
-                ))
-                lying_down = torso_angle <= LYING_TORSO_ANGLE_MAX_DEGREES
+        if lying_down != self.previous_lying_down:
+            print(f"lying_down={lying_down}", flush=True)
+            self.previous_lying_down = lying_down
 
-                if lying_down != previous_lying_down:
-                    print(f"lying_down={lying_down}", flush=True)
-                    previous_lying_down = lying_down
+        bx1, by1, bx2, by2 = bed["region"]
 
-                bed_x1, bed_y1, bed_x2, bed_y2 = BED_REGION
-                current_bed_state = (
-                    bed_x1 <= hip_x <= bed_x2
-                    and bed_y1 <= hip_y <= bed_y2
-                )
+        current_bed_state = (
+            bx1 <= hip_x <= bx2
+            and by1 <= hip_y <= by2
+        )
 
-                if person_in_bed is None:
-                    person_in_bed = current_bed_state
-                elif current_bed_state != person_in_bed:
-                    if candidate_bed_state == current_bed_state:
-                        candidate_state_frames += 1
-                    else:
-                        candidate_bed_state = current_bed_state
-                        candidate_state_frames = 1
+        if self.person_in_bed is None:
+            self.person_in_bed = current_bed_state
+            return
 
-                    if candidate_state_frames >= TRANSITION_FRAMES:
-                        last_bed_event = (
-                            "GETTING_IN_BED" if current_bed_state
-                            else "GETTING_OUT_OF_BED"
-                        )
-                        print(
-                            f"event={last_bed_event} lying_down={lying_down}",
-                            flush=True,
-                        )
-                        if last_bed_event == "GETTING_IN_BED":
-                            bedroom_lights_off()
-                        elif last_bed_event == "GETTING_OUT_OF_BED":
-                            bedroom_lights_on()
-                        person_in_bed = current_bed_state
-                        candidate_bed_state = None
-                        candidate_state_frames = 0
-                else:
-                    candidate_bed_state = None
-                    candidate_state_frames = 0
-finally:
-    picam2.stop()
+        if current_bed_state == self.person_in_bed:
+            self.candidate_bed_state = None
+            self.candidate_state_frames = 0
+            return
+
+        if self.candidate_bed_state == current_bed_state:
+            self.candidate_state_frames += 1
+        else:
+            self.candidate_bed_state = current_bed_state
+            self.candidate_state_frames = 1
+
+        if (
+            self.candidate_state_frames
+            < bed["transition_frames"]
+        ):
+            return
+
+        self.last_bed_event = (
+            "GETTING_IN_BED"
+            if current_bed_state
+            else "GETTING_OUT_OF_BED"
+        )
+
+        print(
+            f"event={self.last_bed_event} "
+            f"lying_down={lying_down}",
+            flush=True
+        )
+
+        if current_bed_state:
+            bedroom_lights_off()
+        else:
+            bedroom_lights_on()
+
+        self.person_in_bed = current_bed_state
+        self.candidate_bed_state = None
+        self.candidate_state_frames = 0

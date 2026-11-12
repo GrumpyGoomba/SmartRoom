@@ -1,0 +1,21 @@
+
+{
+  "camera": {
+    "width": 960,
+    "height": 540,
+    "fps": 15
+  },
+  "yolo": {
+    "imgsz": 640,
+    "confidence": 0.5,
+    "keypoint_confidence": 0.5
+  },
+  "preview": {
+    "fps": 5
+  },
+  "bed": {
+    "region": [0.5, 0.73, 1.0, 1.0],
+    "transition_frames": 2,
+    "lying_angle_max": 35
+  }
+}
